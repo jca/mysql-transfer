@@ -1,23 +1,14 @@
 # mysql-transfer
-Bash tool for configurable and interactive or batch migration of Mysql databases
-
-Copyright (C) 2018 Webelop Ltd
-Contact: Jean-Charles Callu <jc@webelop.net>
-
-This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
-
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License for more details.
+A simple tool for Mysql data transfer, which runs in interactive or batch mode and creates data transfer profiles which can be shared between developers alongside a project.
 
 ## USAGE:
- mysql-transfer PATH FORCE
+`mysql-transfer PATH FORCE`
  - Argument 1 - PATH:  configuration path. eg: ./sample-transfer
- - Argument 2 - FORCE: optional "force" - bypass configuration questions and run all data migrations
+ - Argument 2 - FORCE: (optional) "force" - bypass configuration questions and run all data migrations
+
+Examples
+- `mysql-transfer ./sample-transfer` Run an interactive data transfer, select source and destination and transfer data
+- `mysql-transfer ./sample-transfer force` Run a non-interactive transfer. Previous settings will be reused.
 
 ## CONFIG FOLDER STRUCTURE:
  - ./structure-data-tables.dist.txt > one table per line, containing all default tables to dump with data
@@ -32,3 +23,16 @@ GNU General Public License for more details.
    *.dist.* files can be created from *.user.* files to share a transfer profile across a team
  - mysqldump and mysql_config_editor MUST BE in the path
 
+##### THE SMALL LINES:
+Copyright (C) 2018 Webelop Ltd
+Contact: Jean-Charles Callu <jc@webelop.net>
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
