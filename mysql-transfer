@@ -1,5 +1,5 @@
 #!/bin/bash
-# mysql-transfer.sh
+# mysql-transfer
 # Copyright (C) 2018 Webelop Ltd
 #
 # This program is free software: you can redistribute it and/or modify
@@ -13,7 +13,7 @@
 # GNU General Public License for more details.
 #
 # USAGE:
-#  mysql-transfer PATH FORCE
+#  ./mysql-transfer PATH FORCE
 #  - Argument 1 - PATH:  configuration path. eg: ./sample-transfer
 #  - Argument 2 - FORCE: optional "force" - bypass configuration questions and run all data migrations
 #
@@ -31,21 +31,26 @@
 #  - mysqldump and mysql_config_editor MUST BE in the path
 # ################################################################################################################ #
 
+echo ""
 echo "mysql-transfer Copyright (C) 2018 Webelop Ltd."
 echo "This program comes with ABSOLUTELY NO WARRANTY; This is free software,"
 echo "and you are welcome to redistribute it under certain conditions;"
 echo "Read LICENSE file for details"
+echo ""
 
 CONFIG_DIR="$1"
-INSTANCE=$(basename "$PROJECT_INSTANCE" | sed "s/[^a-zA-Z0-9]/_/")
 if [ "$CONFIG_DIR" == "" ] || [ ! -d "$CONFIG_DIR" ]; then
-    echo "Usage:"
+    echo "Usage: ./mysql-transfer PATH FORCE"
     echo " - Argument 1: configuration path prefix. eg: ~/transfers/from-test"
     echo " - Argument 2: optional 'force' - bypass configuration questions and run all data migrations"
+    echo ""
     exit;
 fi
 
+LOGINPATH=$(basename "$CONFIG_DIR" | sed "s/[^a-zA-Z0-9]/_/")
 FORCE="$2"
+echo "Transfer $FORCE on profile $LOGINPATH"
+echo ""
 MYSQLDUMP_OPTIONS="--quick --single-transaction --add-drop-table --skip-add-locks --skip-comments --skip-disable-keys --set-gtid-purged=OFF"
 LIMITEDDATA_TABLES=()
 
@@ -77,18 +82,18 @@ function ask_config_question () {
     local VARDESCR=$3
     local CURRENTVALUE="${!VARNAME}"
 
-    if [ ! -f "$VARFILE" ]; then
+    if [ ! -f "$CONFIG_DIR/$VARFILE" ]; then
         if [ "$FORCE" == "1" ]; then
-            echo "Missing $VARFILE!"
+            echo "Missing $CONFIG_DIR/$VARFILE!"
             exit
         fi
     else
-        CURRENTVALUE=$(cat $VARFILE)
+        CURRENTVALUE=$(cat $CONFIG_DIR/$VARFILE)
     fi
 
     # Check saved value
-    if [ "$CURRENTVALUE" != "" ] && [ "$FORCE" == "0" ]; then
-        echo "> Use $VARDESCR [$CURRENTVALUE]? (Y/n)";
+    if [ "$CURRENTVALUE" != "" ] && [ "$FORCE" != "force" ]; then
+        echo "> Use '$CURRENTVALUE' for $VARDESCR ? (Y/n)";
         read USETHIS
         if [ "$USETHIS" == "n" ]; then
             CURRENTVALUE="";
@@ -101,7 +106,7 @@ function ask_config_question () {
         read CURRENTVALUE;
 
         if [ "$CURRENTVALUE" != "" ]; then
-            echo "$CURRENTVALUE" > $VARFILE
+            echo "$CURRENTVALUE" > $CONFIG_DIR/$VARFILE
         fi
     fi
 
@@ -138,20 +143,15 @@ function exec_on_src {
 }
 
 DUMPSRC="0"
-exec_on_src "mysql $SRC_LOGIN_OPTION -ss $SRC_DB_NAME -e 'select 123'" | grep 123 > /dev/null && DUMPSRC="1"
-if [ "$DUMPSRC" == "1" ]; then
-    DUMPSRC="0"
-    login=$(exec_on_src "mysql_config_editor print $SRC_LOGIN_OPTION")
-    echo $login | grep "${SRC_LOGINPATH}" > /dev/null && DUMPSRC="1"
-    if [ "$DUMPSRC" == "1" ] && [ "$FORCE" == "0" ]; then
-        echo $login
-        echo "> Import data FROM $SRC_LOGINPATH? (Y/n)"
-        read USETHIS
-        [ "$USETHIS" == "n" ] && DUMPSRC=0
-    fi
+exec_on_src "mysql $SRC_LOGIN_OPTION -ss $SRC_DB_NAME -e 'select 123' 2> /dev/null" | grep 123 > /dev/null && DUMPSRC="1"
+if [ "$DUMPSRC" == "1" ] && [ "$FORCE" != "force" ]; then
+    echo "> Import data FROM $SRC_LOGINPATH? (Y/n)"
+    exec_on_src "mysql_config_editor print $SRC_LOGIN_OPTION"
+    read USETHIS
+    [ "$USETHIS" == "n" ] && DUMPSRC=0
 fi
 if [ "$DUMPSRC" == "0" ]; then
-    if [ "$FORCE" == "1" ]; then
+    if [ "$FORCE" == "force" ]; then
         echo "Ouch! Source database is undefined!"
         exit;
     fi
@@ -166,34 +166,36 @@ if [ "$DUMPSRC" == "0" ]; then
     if [ "$NEWSRC_DB_PORT" != "" ]; then
         SRC_DB_PORT="$NEWSRC_DB_PORT"
     fi
-    echo "> What is the source database? [$SRC_DB_NAME]"
-    read SRC_DB_NAME
-    if [ "$SRC_DB_NAME" != "" ]; then
-        SRC_DB_NAME="$SRC_DB_NAME"
-    fi
     echo "> Who is the source database user? [$SRC_DB_USER]"
     read NEWSRC_DB_USER
     if [ "$NEWSRC_DB_USER" != "" ]; then
         SRC_DB_USER="$NEWSRC_DB_USER"
     fi
 
-    SQLCMD="mysql_config_editor set $SRC_LOGIN_OPTION --host='$SRC_DB_HOST' --user='$SRC_DB_USER' --password --port='$SRC_DB_PORT'"
-    echo $SQLCMD
+    SQLCMD="mysql_config_editor set --skip-warn $SRC_LOGIN_OPTION --host='$SRC_DB_HOST' --user='$SRC_DB_USER' --password --port='$SRC_DB_PORT'"
     if [ "$MYSQLDUMP_HOST" != "" ] && [ "$MYSQLDUMP_HOST" != "localhost" ]; then
         ssh $MYSQLDUMP_HOST -t "$SQLCMD; exit"
     else
         $SQLCMD
     fi
+    
+    # Test connection
+    exec_on_src "mysql $SRC_LOGIN_OPTION $SRC_DB_NAME -e 'select 123' 2> /dev/null" | grep "123" && DUMPSRC="1"
+    if [ "$DUMPSRC" == "0" ]; then
+      echo "Invalid connection: Import cancelled!"
+      exit
+    fi
 fi
 
+echo ""
 echo ">>>>>>> DESTINATION CONFIGURATION >>>>>>>>"
 ask_config_question "DEST_DB_NAME" "dest-db-name.user.txt" "database name to import data to"
 DEST_LOGINPATH="--login-path=${LOGINPATH}_dump_dst"
 DUMPDEST="0"
-mysql $DEST_LOGINPATH $DEST_DB_NAME -e 'select 123' | grep 123 > /dev/null 2>&1 && DUMPDEST=1
-mysql_config_editor print $DEST_LOGINPATH
-if [ "$DUMPDEST" == "1" ] && [ "$FORCE" == "0" ]; then
+mysql $DEST_LOGINPATH $DEST_DB_NAME -e 'select 123' 2>/dev/null | grep 123 > /dev/null && DUMPDEST=1
+if [ "$DUMPDEST" == "1" ] && [ "$FORCE" != "force" ]; then
     echo "> Import data TO this database? (Y/n)"
+    mysql_config_editor print $DEST_LOGINPATH
     read USETHIS
     [ "$USETHIS" == "n" ] && DUMPDEST=0
 fi
@@ -213,23 +215,25 @@ if [ "$DUMPDEST" == "0" ]; then
     if [ "$NEWDEST_DB_PORT" != "" ]; then
         DEST_DB_PORT="$NEWDEST_DB_PORT"
     fi
-    echo "> Which is the destination database? [$DEST_DB_NAME]"
-    read DEST_DB_NAME
-    if [ "$DEST_DB_NAME" != "" ]; then
-        DEST_DB_NAME="$DEST_DB_NAME"
-    fi
     echo "> Who is the destination database user? [$DEST_DB_USER]"
     read NEWDEST_DB_USER
     if [ "$NEWDEST_DB_USER" != "" ]; then
         DEST_DB_USER="$NEWDEST_DB_USER"
     fi
-    mysql_config_editor set $DEST_LOGINPATH --host="$DEST_HOST" --user="$DEST_DB_USER" --port="$DEST_DB_PORT" --password
-    mysql_config_editor print $DEST_LOGINPATH
+    mysql_config_editor set --skip-warn $DEST_LOGINPATH --host="$DEST_HOST" --user="$DEST_DB_USER" --port="$DEST_DB_PORT" --password > /dev/null
+
+    # Test connection
+    mysql $DEST_LOGINPATH $DEST_DB_NAME -e 'select 123' 2> /dev/null | grep "123" > /dev/null && DUMPDEST="1"
+    if [ "$DUMPDEST" == "0" ]; then
+      echo "Invalid connection: Import cancelled"
+      exit
+    fi
 fi
 
-DUMPED="0";
+DUMPED="0"
+echo ""
 echo ">>>>>>> STRUCTURE ONLY >>>>>>>>"
-if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
+if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" != "force" ]; then
     echo "$STRUCTURE_ONLY_TABLES"
     echo "> Dump structure only for these tables? (y/N)"
     read YES
@@ -238,11 +242,11 @@ if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
     fi
 fi
 
-if [ "$STRUCTURE_ONLY_TABLES" == "" ] && [ "$FORCE" == "0" ]; then
+if [ "$STRUCTURE_ONLY_TABLES" == "" ] && [ "$FORCE" != "force" ]; then
     echo "> Dump structure only for custom table list? (empty to skip)"
     read STRUCTURE_ONLY_TABLES
 fi
-if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
+if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" != "force" ]; then
     for table in $(echo "$STRUCTURE_ONLY_TABLES" | sed 's/\W\+/&\n/g'| grep -oiE '[a-z0-9_]+')
     do
         echo "< $(date '+%H:%M:%S') - Dumping structure of $table"
@@ -250,8 +254,9 @@ if [ "$STRUCTURE_ONLY_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
     done
 fi
 
+echo ""
 echo ">>>>>>> STRUCTURE AND DATA >>>>>>>>"
-if [ "$STRUCTURE_DATA_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
+if [ "$STRUCTURE_DATA_TABLES" != "" ] && [ "$FORCE" != "force" ]; then
     echo "$STRUCTURE_DATA_TABLES"
     echo "> Dump structure and data for these tables? (y/N)"
     read YES
@@ -260,7 +265,7 @@ if [ "$STRUCTURE_DATA_TABLES" != "" ] && [ "$FORCE" == "0" ]; then
     fi
 fi
 
-if [ "$STRUCTURE_DATA_TABLES" == "" ] && [ "$FORCE" == "0" ]; then
+if [ "$STRUCTURE_DATA_TABLES" == "" ] && [ "$FORCE" != "force" ]; then
     echo "> Dump structure and data for custom table list? (empty to skip)"
     read TABLES
 fi
@@ -278,17 +283,17 @@ if [ "$STRUCTURE_DATA_TABLES" != "" ]; then
     done
 fi
 
+echo ""
 echo ">>>>>>> STRUCTURE AND RECENT DATA >>>>>>>>"
 LIMITEDDATA_SQLCMD=()
 
 # see ./configuration.dist.sh for exemples
 for clause in "${LIMITEDDATA_TABLES[@]}"
 do
-    PLACEHOLDER=$(echo "$clause" | grep -oE '\{\{[^}]+\}\}' | sed 's#[{}]##g')
+    PLACEHOLDER=$(echo "$clause" | grep -oE '\{\{[^}]+\}\}' | sed 's#[{ }]##g')
     if [ "$PLACEHOLDER" != "" ]; then
         VALUE=""
-        if [ "${!PLACEHOLDER}" == "" ]
-        then
+        if [ "${!PLACEHOLDER}" == "" ]; then
             SQLVAR="${PLACEHOLDER}_QUERY"
             SQLSTMT=${!SQLVAR}
             if [ "$SQLSTMT" != "" ]
@@ -298,25 +303,22 @@ do
         else
             VALUE="${!PLACEHOLDER}"
         fi
-        if [ "$VALUE" == "" ] && [ "$FORCE" == "0" ]
-        then
-            echo "< Value for $PLACEHOLDER in $clause? (Fill in numerical value, or 'n' to skip similar clauses)"
-            read VALUE
-        fi
+        if [ "$VALUE" == "" ]; then
+            VALUE=0
+	fi
+
         eval "$PLACEHOLDER='$VALUE'"
         NUMERICVALUE=0
         echo "$VALUE" | grep -oE '^[0-9]+$' > /dev/null && NUMERICVALUE=1
-        if [ "$NUMERICVALUE" == "1" ]
-        then
-            echo "< $PLACEHOLDER = [$SQLSTMT]"
-            clause=$(echo "$clause" | sed "s/{{$PLACEHOLDER}}/$VALUE/g")
+        if [ "$NUMERICVALUE" == "1" ]; then
+            clause=$(echo "$clause" | sed "s/{{ *$PLACEHOLDER *}}/$VALUE/g")
         else
             echo "< $PLACEHOLDER is not numeric [$VALUE]... skipping!"
             continue;
         fi
     fi
 
-    if [ "$FORCE" == "0" ]; then
+    if [ "$FORCE" != "force" ]; then
         echo "> Dump recent data for $clause? (y/N)"
         read YES
         if [ "$YES" != 'y' ]; then
@@ -336,7 +338,9 @@ for clause in "${LIMITEDDATA_SQLCMD[@]}"; do
     fi
 done
 
-IMPORT_UPDATES_PATH="$CONFIG_DIR/import-updates.dist.sql"
+echo ""
+echo ">>>>>>> DATABASE UPDATES >>>>>>>>"
+IMPORT_UPDATES_PATH="$CONFIG_DIR/data-updates.dist.sql"
 if [ -f "$IMPORT_UPDATES_PATH" ]
 then
     echo "< $(date '+%H:%M:%S') - Executing database updates at $IMPORT_UPDATES_PATH"
@@ -345,7 +349,7 @@ else
     echo "< $(date '+%H:%M:%S') - Database update file does not exist at $IMPORT_UPDATES_PATH"
 fi
 
-IMPORT_UPDATES_PATH="$CONFIG_DIR/import-updates.user.sql"
+IMPORT_UPDATES_PATH="$CONFIG_DIR/data-updates.user.sql"
 if [ -f "$IMPORT_UPDATES_PATH" ]
 then
     echo "< $(date '+%H:%M:%S') - Executing database updates at $IMPORT_UPDATES_PATH"
